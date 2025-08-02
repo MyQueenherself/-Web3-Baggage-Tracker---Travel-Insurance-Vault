@@ -39,6 +39,12 @@ This smart contract revolutionizes travel insurance by providing:
 - Manual review system for complex cases
 - Instant payouts upon approval
 
+### ✈️ Travel Delay Compensation
+- Report flight delays with automatic compensation
+- Tiered compensation based on delay duration
+- Instant payouts for qualifying delays
+- No manual claims processing required
+
 ## 🚀 Usage Instructions
 
 ### Creating a Policy
@@ -78,13 +84,35 @@ This smart contract revolutionizes travel insurance by providing:
 - `amount`: Claim amount in microSTX
 - `evidence`: Supporting evidence
 
+### Reporting Flight Delays
+
+```clarity
+(contract-call? .contract report-flight-delay u1 "AA123" u1000 u1300)
+```
+- `policy-id`: Your policy ID
+- `flight-number`: Flight identifier
+- `scheduled-departure`: Scheduled departure time (block height)
+- `actual-departure`: Actual departure time (block height)
+
+### Processing Delay Compensation
+
+```clarity
+(contract-call? .contract process-delay-compensation u1)
+```
+- Automatically calculates and pays compensation based on delay duration
+- 6+ hours: 25% of coverage
+- 3+ hours: 12.5% of coverage  
+- 1+ hours: 6.25% of coverage
+
 ### Reading Contract Data
 
 ```clarity
 (contract-call? .contract get-policy u1)
 (contract-call? .contract get-baggage u1)
 (contract-call? .contract get-claim u1)
+(contract-call? .contract get-delay u1)
 (contract-call? .contract get-user-policies 'SP1234...)
+(contract-call? .contract get-delay-compensation-estimate u180 u1000000)
 ```
 
 ## 🔐 Security Features
