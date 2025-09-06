@@ -11,6 +11,9 @@
 (define-constant ERR_DELAY_NOT_FOUND (err u109))
 (define-constant ERR_DELAY_ALREADY_PROCESSED (err u110))
 (define-constant ERR_INVALID_DELAY_DURATION (err u111))
+(define-constant ERR_NOT_BENEFICIARY (err u112))
+(define-constant ERR_TRANSFER_TO_SELF (err u113))
+(define-constant ERR_BENEFICIARY_ALREADY_SET (err u114))
 
 (define-data-var policy-id-nonce uint u0)
 (define-data-var baggage-id-nonce uint u0)
@@ -80,6 +83,25 @@
     status: (string-ascii 20),
     reported-at: uint,
     processed-at: uint
+  }
+)
+
+(define-map policy-beneficiaries
+  { policy-id: uint }
+  {
+    beneficiary: principal,
+    emergency-access: bool,
+    set-at: uint
+  }
+)
+
+(define-map transfer-requests
+  { policy-id: uint }
+  {
+    from-user: principal,
+    to-user: principal,
+    requested-at: uint,
+    approved: bool
   }
 )
 
@@ -433,4 +455,167 @@
 
 (define-read-only (get-delay-compensation-estimate (delay-duration uint) (coverage-amount uint))
   (calculate-delay-compensation delay-duration coverage-amount)
+)
+
+(define-private (is-authorized-user (policy-id uint) (user principal))
+  (match (map-get? policies { policy-id: policy-id })
+    policy 
+      (if (is-eq (get policyholder policy) user)
+        true
+        (match (map-get? policy-beneficiaries { policy-id: policy-id })
+          beneficiary-data (is-eq (get beneficiary beneficiary-data) user)
+          false
+        )
+      )
+    false
+  )
+)
+
+(define-public (set-policy-beneficiary (policy-id uint) (beneficiary principal) (emergency-access bool))
+  (let 
+    (
+      (policy (unwrap! (map-get? policies { policy-id: policy-id }) ERR_POLICY_NOT_FOUND))
+      (existing-beneficiary (map-get? policy-beneficiaries { policy-id: policy-id }))
+    )
+    (asserts! (is-eq (get policyholder policy) tx-sender) ERR_UNAUTHORIZED)
+    (asserts! (not (is-eq beneficiary tx-sender)) ERR_TRANSFER_TO_SELF)
+    (asserts! (is-none existing-beneficiary) ERR_BENEFICIARY_ALREADY_SET)
+    
+    (map-set policy-beneficiaries
+      { policy-id: policy-id }
+      {
+        beneficiary: beneficiary,
+        emergency-access: emergency-access,
+        set-at: stacks-block-height
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-public (update-beneficiary-access (policy-id uint) (emergency-access bool))
+  (let 
+    (
+      (policy (unwrap! (map-get? policies { policy-id: policy-id }) ERR_POLICY_NOT_FOUND))
+      (beneficiary-data (unwrap! (map-get? policy-beneficiaries { policy-id: policy-id }) ERR_NOT_BENEFICIARY))
+    )
+    (asserts! (is-eq (get policyholder policy) tx-sender) ERR_UNAUTHORIZED)
+    
+    (map-set policy-beneficiaries
+      { policy-id: policy-id }
+      (merge beneficiary-data {
+        emergency-access: emergency-access
+      })
+    )
+    (ok true)
+  )
+)
+
+(define-public (request-policy-transfer (policy-id uint) (to-user principal))
+  (let 
+    (
+      (policy (unwrap! (map-get? policies { policy-id: policy-id }) ERR_POLICY_NOT_FOUND))
+    )
+    (asserts! (is-eq (get policyholder policy) tx-sender) ERR_UNAUTHORIZED)
+    (asserts! (not (is-eq to-user tx-sender)) ERR_TRANSFER_TO_SELF)
+    
+    (map-set transfer-requests
+      { policy-id: policy-id }
+      {
+        from-user: tx-sender,
+        to-user: to-user,
+        requested-at: stacks-block-height,
+        approved: false
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-public (approve-policy-transfer (policy-id uint))
+  (let 
+    (
+      (transfer-request (unwrap! (map-get? transfer-requests { policy-id: policy-id }) ERR_POLICY_NOT_FOUND))
+      (policy (unwrap! (map-get? policies { policy-id: policy-id }) ERR_POLICY_NOT_FOUND))
+    )
+    (asserts! (is-eq (get to-user transfer-request) tx-sender) ERR_UNAUTHORIZED)
+    (asserts! (not (get approved transfer-request)) ERR_CLAIM_ALREADY_PROCESSED)
+    
+    (begin
+      (map-set policies
+        { policy-id: policy-id }
+        (merge policy {
+          policyholder: tx-sender
+        })
+      )
+      
+      (map-set user-policies
+        { user: (get from-user transfer-request) }
+        { policy-ids: (list) }
+      )
+      
+      (let ((new-user-policies (default-to { policy-ids: (list) } (map-get? user-policies { user: tx-sender }))))
+        (map-set user-policies
+          { user: tx-sender }
+          { policy-ids: (unwrap! (as-max-len? (append (get policy-ids new-user-policies) policy-id) u10) ERR_UNAUTHORIZED) }
+        )
+      )
+      
+      (map-set transfer-requests
+        { policy-id: policy-id }
+        (merge transfer-request {
+          approved: true
+        })
+      )
+      
+      (ok true)
+    )
+  )
+)
+
+(define-public (beneficiary-submit-claim (policy-id uint) (baggage-id uint) (claim-type (string-ascii 20)) (amount uint) (evidence (string-ascii 100)))
+  (let 
+    (
+      (policy (unwrap! (map-get? policies { policy-id: policy-id }) ERR_POLICY_NOT_FOUND))
+      (baggage (unwrap! (map-get? baggage-items { baggage-id: baggage-id }) ERR_BAGGAGE_NOT_FOUND))
+      (beneficiary-data (unwrap! (map-get? policy-beneficiaries { policy-id: policy-id }) ERR_NOT_BENEFICIARY))
+      (new-claim-id (+ (var-get claim-id-nonce) u1))
+    )
+    (asserts! (is-eq (get beneficiary beneficiary-data) tx-sender) ERR_NOT_BENEFICIARY)
+    (asserts! (get emergency-access beneficiary-data) ERR_UNAUTHORIZED)
+    (asserts! (is-eq (get policy-id baggage) policy-id) ERR_UNAUTHORIZED)
+    (asserts! (is-eq (get status policy) "active") ERR_INVALID_STATUS)
+    (asserts! (< stacks-block-height (get end-block policy)) ERR_POLICY_EXPIRED)
+    (asserts! (<= amount (get coverage-amount policy)) ERR_INSUFFICIENT_FUNDS)
+    
+    (map-set claims
+      { claim-id: new-claim-id }
+      {
+        policy-id: policy-id,
+        baggage-id: baggage-id,
+        claimant: tx-sender,
+        claim-type: claim-type,
+        amount: amount,
+        status: "pending",
+        submitted-at: stacks-block-height,
+        processed-at: u0,
+        evidence: evidence
+      }
+    )
+    
+    (var-set claim-id-nonce new-claim-id)
+    (ok new-claim-id)
+  )
+)
+
+(define-read-only (get-policy-beneficiary (policy-id uint))
+  (map-get? policy-beneficiaries { policy-id: policy-id })
+)
+
+(define-read-only (get-transfer-request (policy-id uint))
+  (map-get? transfer-requests { policy-id: policy-id })
+)
+
+(define-read-only (can-user-access-policy (policy-id uint) (user principal))
+  (is-authorized-user policy-id user)
 )

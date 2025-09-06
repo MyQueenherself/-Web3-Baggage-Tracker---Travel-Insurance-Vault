@@ -45,6 +45,12 @@ This smart contract revolutionizes travel insurance by providing:
 - Instant payouts for qualifying delays
 - No manual claims processing required
 
+### 🔄 Policy Transfer & Beneficiary System
+- Transfer policy ownership between users
+- Set beneficiaries with emergency access rights
+- Corporate travel management capabilities
+- Family policy management for minors
+
 ## 🚀 Usage Instructions
 
 ### Creating a Policy
@@ -104,6 +110,28 @@ This smart contract revolutionizes travel insurance by providing:
 - 3+ hours: 12.5% of coverage  
 - 1+ hours: 6.25% of coverage
 
+### Managing Policy Transfers & Beneficiaries
+
+```clarity
+(contract-call? .contract set-policy-beneficiary u1 'SP123... true)
+```
+- Set a beneficiary with emergency access rights
+
+```clarity
+(contract-call? .contract request-policy-transfer u1 'SP456...)
+```
+- Request to transfer policy to another user
+
+```clarity
+(contract-call? .contract approve-policy-transfer u1)
+```
+- Approve an incoming policy transfer (called by recipient)
+
+```clarity
+(contract-call? .contract beneficiary-submit-claim u1 u1 "emergency" u100000 "Traveler incapacitated")
+```
+- Submit emergency claim as beneficiary
+
 ### Reading Contract Data
 
 ```clarity
@@ -111,8 +139,11 @@ This smart contract revolutionizes travel insurance by providing:
 (contract-call? .contract get-baggage u1)
 (contract-call? .contract get-claim u1)
 (contract-call? .contract get-delay u1)
+(contract-call? .contract get-policy-beneficiary u1)
+(contract-call? .contract get-transfer-request u1)
 (contract-call? .contract get-user-policies 'SP1234...)
 (contract-call? .contract get-delay-compensation-estimate u180 u1000000)
+(contract-call? .contract can-user-access-policy u1 'SP123...)
 ```
 
 ## 🔐 Security Features
