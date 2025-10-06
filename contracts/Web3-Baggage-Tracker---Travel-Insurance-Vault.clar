@@ -616,6 +616,30 @@
   (map-get? transfer-requests { policy-id: policy-id })
 )
 
+(define-public (cancel-policy (policy-id uint))
+  (let
+    (
+      (policy (unwrap! (map-get? policies { policy-id: policy-id }) ERR_POLICY_NOT_FOUND))
+      (total-duration (- (get end-block policy) (get start-block policy)))
+      (elapsed (- stacks-block-height (get start-block policy)))
+      (remaining (- total-duration elapsed))
+      (refund (/ (* (get vault-balance policy) remaining) total-duration))
+    )
+    (asserts! (is-eq (get policyholder policy) tx-sender) ERR_UNAUTHORIZED)
+    (asserts! (is-eq (get status policy) "active") ERR_INVALID_STATUS)
+    (asserts! (< stacks-block-height (get end-block policy)) ERR_POLICY_EXPIRED)
+    (try! (as-contract (stx-transfer? refund tx-sender (get policyholder policy))))
+    (map-set policies
+      { policy-id: policy-id }
+      (merge policy {
+        status: "cancelled",
+        vault-balance: (- (get vault-balance policy) refund)
+      })
+    )
+    (ok refund)
+  )
+)
+
 (define-read-only (can-user-access-policy (policy-id uint) (user principal))
   (is-authorized-user policy-id user)
 )
