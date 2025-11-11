@@ -643,3 +643,26 @@
 (define-read-only (can-user-access-policy (policy-id uint) (user principal))
   (is-authorized-user policy-id user)
 )
+
+(define-public (withdraw-unused-vault-funds (policy-id uint))
+  (let
+    (
+      (policy (unwrap! (map-get? policies { policy-id: policy-id }) ERR_POLICY_NOT_FOUND))
+    )
+    (asserts! (is-eq (get policyholder policy) tx-sender) ERR_UNAUTHORIZED)
+    (asserts! (>= stacks-block-height (get end-block policy)) ERR_POLICY_EXPIRED)
+    (asserts! (is-eq (get status policy) "active") ERR_INVALID_STATUS)
+    (let ((balance (get vault-balance policy)))
+      (asserts! (> balance u0) ERR_INSUFFICIENT_FUNDS)
+      (try! (as-contract (stx-transfer? balance tx-sender (get policyholder policy))))
+      (map-set policies
+        { policy-id: policy-id }
+        (merge policy {
+          vault-balance: u0,
+          status: "expired"
+        })
+      )
+      (ok balance)
+    )
+  )
+)
